@@ -31,7 +31,9 @@ pub fn create_surface_view<'local>(
 /// `new EditText(activity)` styled as an invisible, multi-line input relay.
 ///
 /// It sits above the surface (sibling in the FrameLayout) and owns the IME
-/// connection for the Lua tab; its text is read via [`crate::ui::android::lua_input_text`].
+/// connection for both input tabs (Lua script / Settings rules); it is
+/// repositioned per-tab via `ViewGroup.updateViewLayout`. Its text is read via
+/// [`crate::ui::android::lua_input_text`].
 pub fn create_edit_text<'local>(
     env: &mut Env<'local>,
     activity: &JObject<'local>,
@@ -44,9 +46,24 @@ pub fn create_edit_text<'local>(
     )?;
 
     // Transparent so the egui box shows through; light text on the dark panel.
-    env.call_method(&et, jni_str!("setBackgroundColor"), jni_sig!("(I)V"), &[JValue::Int(0x00000000)])?;
-    env.call_method(&et, jni_str!("setTextColor"), jni_sig!("(I)V"), &[JValue::Int(0xFFE6E6E6u32 as i32)])?;
-    env.call_method(&et, jni_str!("setHintTextColor"), jni_sig!("(I)V"), &[JValue::Int(0xFF707070u32 as i32)])?;
+    env.call_method(
+        &et,
+        jni_str!("setBackgroundColor"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0x00000000)],
+    )?;
+    env.call_method(
+        &et,
+        jni_str!("setTextColor"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0xFFE6E6E6u32 as i32)],
+    )?;
+    env.call_method(
+        &et,
+        jni_str!("setHintTextColor"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0xFF707070u32 as i32)],
+    )?;
 
     // TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_MULTI_LINE
     env.call_method(
@@ -55,7 +72,12 @@ pub fn create_edit_text<'local>(
         jni_sig!("(I)V"),
         &[JValue::Int(0x00020001)],
     )?;
-    env.call_method(&et, jni_str!("setSingleLine"), jni_sig!("(Z)V"), &[JValue::Bool(false)])?;
+    env.call_method(
+        &et,
+        jni_str!("setSingleLine"),
+        jni_sig!("(Z)V"),
+        &[JValue::Bool(false)],
+    )?;
 
     // Gravity.TOP | Gravity.START
     env.call_method(
@@ -64,7 +86,12 @@ pub fn create_edit_text<'local>(
         jni_sig!("(I)V"),
         &[JValue::Int(0x30 | 0x800003)],
     )?;
-    env.call_method(&et, jni_str!("setTextSize"), jni_sig!("(F)V"), &[JValue::Float(13.0)])?;
+    env.call_method(
+        &et,
+        jni_str!("setTextSize"),
+        jni_sig!("(F)V"),
+        &[JValue::Float(13.0)],
+    )?;
 
     // Typeface.MONOSPACE
     let tf = env
@@ -92,18 +119,123 @@ pub fn create_edit_text<'local>(
 
     // Hidden (GONE) until the Lua tab asks for input; otherwise it would
     // swallow touches in its region on every tab.
-    env.call_method(&et, jni_str!("setVisibility"), jni_sig!("(I)V"), &[JValue::Int(8)])?;
+    env.call_method(
+        &et,
+        jni_str!("setVisibility"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(8)],
+    )?;
 
     Ok(et)
 }
 
-/// `new FrameLayout(activity)` with the SurfaceView (fill) and EditText
-/// (Lua input region) as children. Returns the frame layout.
+/// `new EditText(activity)` styled like the Lua relay, for the Settings
+/// domain-rules box (multi-line, hidden until the Settings tab is focused).
+/// Position is fixed at attach time — the EditTexts are never moved at
+/// runtime (updateViewLayout on a child stalls the game's main thread).
+pub fn create_rule_edit<'local>(
+    env: &mut Env<'local>,
+    activity: &JObject<'local>,
+) -> jni::errors::Result<JObject<'local>> {
+    let cls = env.find_class(jni_str!("android/widget/EditText"))?;
+    let et = env.new_object(
+        cls,
+        jni_sig!("(Landroid/content/Context;)V"),
+        &[JValue::Object(activity)],
+    )?;
+
+    // Transparent so the egui box shows through; light text on the dark panel.
+    env.call_method(
+        &et,
+        jni_str!("setBackgroundColor"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0x00000000)],
+    )?;
+    env.call_method(
+        &et,
+        jni_str!("setTextColor"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0xFFE6E6E6u32 as i32)],
+    )?;
+    env.call_method(
+        &et,
+        jni_str!("setHintTextColor"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0xFF707070u32 as i32)],
+    )?;
+
+    // TYPE_CLASS_TEXT | TYPE_TEXT_FLAG_MULTI_LINE
+    env.call_method(
+        &et,
+        jni_str!("setInputType"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0x00020001)],
+    )?;
+    env.call_method(
+        &et,
+        jni_str!("setSingleLine"),
+        jni_sig!("(Z)V"),
+        &[JValue::Bool(false)],
+    )?;
+
+    // Gravity.TOP | Gravity.START
+    env.call_method(
+        &et,
+        jni_str!("setGravity"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(0x30 | 0x800003)],
+    )?;
+    env.call_method(
+        &et,
+        jni_str!("setTextSize"),
+        jni_sig!("(F)V"),
+        &[JValue::Float(13.0)],
+    )?;
+
+    // Typeface.MONOSPACE
+    let tf = env
+        .get_static_field(
+            jni_str!("android/graphics/Typeface"),
+            jni_str!("MONOSPACE"),
+            jni_sig!("Landroid/graphics/Typeface;"),
+        )?
+        .l()?;
+    env.call_method(
+        &et,
+        jni_str!("setTypeface"),
+        jni_sig!("(Landroid/graphics/Typeface;)V"),
+        &[JValue::Object(&tf)],
+    )?;
+
+    // Hint shown while empty.
+    let hint = env.new_string("origin[:port] -> target[:port], comma separated")?;
+    env.call_method(
+        &et,
+        jni_str!("setHint"),
+        jni_sig!("(Ljava/lang/CharSequence;)V"),
+        &[JValue::Object(&hint)],
+    )?;
+
+    // Hidden (GONE) until the Settings tab asks for input.
+    env.call_method(
+        &et,
+        jni_str!("setVisibility"),
+        jni_sig!("(I)V"),
+        &[JValue::Int(8)],
+    )?;
+
+    Ok(et)
+}
+
+/// `new FrameLayout(activity)` with the SurfaceView (fill) and the two
+/// EditText relays (Lua script + Settings rules) as children. Returns the
+/// frame layout.
 pub fn wrap_in_frame_layout<'local>(
     env: &mut Env<'local>,
     activity: &JObject<'local>,
     surface_view: &JObject<'local>,
     edit_text: &JObject<'local>,
+    rule_edit: &JObject<'local>,
 ) -> jni::errors::Result<JObject<'local>> {
     let fl_cls = env.find_class(jni_str!("android/widget/FrameLayout"))?;
     let frame = env.new_object(
@@ -114,7 +246,11 @@ pub fn wrap_in_frame_layout<'local>(
 
     // SurfaceView: fill the window.
     let lp_cls = env.find_class(jni_str!("android/widget/FrameLayout$LayoutParams"))?;
-    let fill = env.new_object(&lp_cls, jni_sig!("(II)V"), &[JValue::Int(-1), JValue::Int(-1)])?;
+    let fill = env.new_object(
+        &lp_cls,
+        jni_sig!("(II)V"),
+        &[JValue::Int(-1), JValue::Int(-1)],
+    )?;
     env.call_method(
         &frame,
         jni_str!("addView"),
@@ -124,10 +260,29 @@ pub fn wrap_in_frame_layout<'local>(
 
     // EditText: MATCH_PARENT width, positioned over the Lua input box.
     let (left, top, w, h) = crate::ui::lua::input_rect_px();
-    let et_lp = env.new_object(&lp_cls, jni_sig!("(II)V"), &[JValue::Int(-1), JValue::Int(h)])?;
-    env.set_field(&et_lp, jni_str!("leftMargin"), jni_sig!("I"), JValue::Int(left))?;
-    env.set_field(&et_lp, jni_str!("rightMargin"), jni_sig!("I"), JValue::Int(left))?;
-    env.set_field(&et_lp, jni_str!("topMargin"), jni_sig!("I"), JValue::Int(top))?;
+    let et_lp = env.new_object(
+        &lp_cls,
+        jni_sig!("(II)V"),
+        &[JValue::Int(-1), JValue::Int(h)],
+    )?;
+    env.set_field(
+        &et_lp,
+        jni_str!("leftMargin"),
+        jni_sig!("I"),
+        JValue::Int(left),
+    )?;
+    env.set_field(
+        &et_lp,
+        jni_str!("rightMargin"),
+        jni_sig!("I"),
+        JValue::Int(left),
+    )?;
+    env.set_field(
+        &et_lp,
+        jni_str!("topMargin"),
+        jni_sig!("I"),
+        JValue::Int(top),
+    )?;
     // The LayoutParams width is set below (MATCH_PARENT already implies
     // parent-minus-margins, so leave it).
     let _ = w;
@@ -136,6 +291,22 @@ pub fn wrap_in_frame_layout<'local>(
         jni_str!("addView"),
         jni_sig!("(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V"),
         &[JValue::Object(edit_text), JValue::Object(&et_lp)],
+    )?;
+
+    // Rule EditText: a tiny (1x1) box that owns the IME connection for the
+    // Settings tab. The typed text is displayed in the egui TextEdit instead,
+    // so it must be effectively invisible yet stay VISIBLE — showSoftInput
+    // rejects non-VISIBLE views (isShown). Never moved at runtime.
+    let rule_lp = env.new_object(
+        &lp_cls,
+        jni_sig!("(II)V"),
+        &[JValue::Int(1), JValue::Int(1)],
+    )?;
+    env.call_method(
+        &frame,
+        jni_str!("addView"),
+        jni_sig!("(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V"),
+        &[JValue::Object(rule_edit), JValue::Object(&rule_lp)],
     )?;
 
     Ok(frame)
@@ -148,7 +319,9 @@ pub fn wrap_in_frame_layout<'local>(
 ///   handling input);
 /// - without NOT_TOUCH_MODAL the panel is touch-modal and swallows all touches
 ///   outside its bounds.
-/// (While the Lua tab is editing, NOT_FOCUSABLE is temporarily cleared.)
+/// (While an input tab is editing, NOT_FOCUSABLE is temporarily cleared — the
+/// IME does not open on NOT_FOCUSABLE windows on this device; the flag is
+/// restored when the tab is left.)
 pub fn create_layout_params<'local>(
     env: &mut Env<'local>,
     token: &JObject<'local>,
@@ -157,8 +330,18 @@ pub fn create_layout_params<'local>(
 
     let params = env.new_object(cls, jni_sig!("()V"), &[])?;
 
-    env.set_field(&params, jni_str!("width"), jni_sig!("I"), JValue::Int(DEFAULT_W))?;
-    env.set_field(&params, jni_str!("height"), jni_sig!("I"), JValue::Int(DEFAULT_H))?;
+    env.set_field(
+        &params,
+        jni_str!("width"),
+        jni_sig!("I"),
+        JValue::Int(DEFAULT_W),
+    )?;
+    env.set_field(
+        &params,
+        jni_str!("height"),
+        jni_sig!("I"),
+        JValue::Int(DEFAULT_H),
+    )?;
     env.set_field(
         &params,
         jni_str!("type"),

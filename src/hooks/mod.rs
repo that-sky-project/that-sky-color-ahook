@@ -10,6 +10,7 @@
 mod cert_verify;
 mod http_client;
 mod lua;
+pub(crate) mod settings;
 mod skylog;
 
 // Re-export public types so callers see a flat `hooks::*` namespace.

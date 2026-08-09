@@ -5,9 +5,10 @@ pub mod android;
 pub mod console;
 pub mod lua;
 pub mod renderer;
+pub mod settings;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use egui::{Align, Color32, Context, CornerRadius, Frame, Layout, Margin, RichText, Sense};
 
@@ -102,11 +103,20 @@ pub fn show_overlay(ctx: &Context) {
                 match current_tab() {
                     Tab::About => tab_body(ui, about_tab),
                     Tab::Console => tab_body(ui, console::show),
-                    Tab::Settings => tab_body(ui, settings_tab),
+                    Tab::Settings => settings::show(ui),
                     Tab::Lua => lua::show(ui),
                 }
             });
         });
+}
+
+/// Close the keyboard before collapsing the window, restore on expand.
+fn set_tab_input_active(tab: Tab, active: bool) {
+    match tab {
+        Tab::Lua => crate::ui::android::set_lua_input_active(active),
+        Tab::Settings => crate::ui::android::set_settings_input_active(active),
+        _ => {}
+    }
 }
 
 /// Collapse/expand toggle: shrinks the whole SurfaceView window to the title
@@ -127,17 +137,19 @@ fn toggle_button(ui: &mut egui::Ui) {
         // Pointing down (collapse).
         vec![tri.left_top(), tri.right_top(), tri.center_bottom()]
     };
-    ui.painter()
-        .add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+    ui.painter().add(egui::Shape::convex_polygon(
+        points,
+        color,
+        egui::Stroke::NONE,
+    ));
 
     if response.clicked() {
         let next = !collapsed;
         COLLAPSED.store(next, Ordering::Relaxed);
+        let tab = current_tab();
         // Close the keyboard before shrinking the window.
-        if next && current_tab() == Tab::Lua {
-            crate::ui::android::set_lua_input_active(false);
-        }
         if next {
+            set_tab_input_active(tab, false);
             crate::ui::android::resize_surface(
                 android::window::DEFAULT_W,
                 android::window::COLLAPSED_H,
@@ -147,18 +159,17 @@ fn toggle_button(ui: &mut egui::Ui) {
                 android::window::DEFAULT_W,
                 android::window::DEFAULT_H,
             );
-            // Restore keyboard access if we are still on the Lua tab.
-            if current_tab() == Tab::Lua {
-                crate::ui::android::set_lua_input_active(true);
-            }
+            // Restore keyboard access if we are still on an input tab.
+            set_tab_input_active(tab, true);
         }
     }
 }
 
 /// Tab bar: About | Console | Settings | Lua.
 ///
-/// Entering the Lua tab makes the window focusable and opens the Android
-/// keyboard for the native input box; leaving restores `NOT_FOCUSABLE`.
+/// Entering an input tab (Lua/Settings) makes the window focusable and opens
+/// the Android keyboard for its native input box; leaving restores
+/// `NOT_FOCUSABLE`.
 fn show_tabs(ui: &mut egui::Ui) {
     let mut tab = current_tab();
 
@@ -185,8 +196,10 @@ fn show_tabs(ui: &mut egui::Ui) {
     });
 
     if tab != current_tab() {
-        // Give/restore keyboard access when switching to/from Lua.
-        crate::ui::android::set_lua_input_active(tab == Tab::Lua);
+        let prev = current_tab();
+        // Give/restore keyboard access when switching to/from input tabs.
+        set_tab_input_active(prev, false);
+        set_tab_input_active(tab, true);
         *TAB.lock().unwrap_or_else(|p| p.into_inner()) = tab;
     }
 }
@@ -207,10 +220,7 @@ fn tab_body(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
 /// About tab: overlay & info.
 fn about_tab(ui: &mut egui::Ui) {
     ui.label(RichText::new("that-sky-ahook overlay").strong());
-    ui.label(
-        RichText::new("egui + wgpu on a SurfaceView (TYPE_APPLICATION_PANEL)")
-            .weak(),
-    );
+    ui.label(RichText::new("egui + wgpu on a SurfaceView (TYPE_APPLICATION_PANEL)").weak());
 
     ui.add_space(4.0);
 
@@ -218,14 +228,6 @@ fn about_tab(ui: &mut egui::Ui) {
     ui.label(RichText::new("Author: ColorSkyFun <i@colorsky.fun>").weak());
 
     ui.add_space(4.0);
-}
-
-/// Settings tab: placeholder (implemented later), vertically centered.
-fn settings_tab(ui: &mut egui::Ui) {
-    ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() * 0.4).max(8.0));
-        ui.weak("Settings — coming soon");
-    });
 }
 
 /// Title-bar drag: record the press, then absolutely position the window.

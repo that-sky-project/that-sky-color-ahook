@@ -24,7 +24,7 @@ pub fn show(ui: &mut egui::Ui) {
     // Fill the full content width so the border matches the native EditText.
     egui::Frame::group(ui.style())
         .fill(egui::Color32::TRANSPARENT)
-        .inner_margin(egui::Margin::same(8))
+        // .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.set_min_size(egui::vec2(ui.available_width(), box_h - 16.0));
         });
@@ -32,10 +32,8 @@ pub fn show(ui: &mut egui::Ui) {
     ui.add_space(8.0);
 
     ui.horizontal(|ui| {
-        let execute_btn = egui::Button::new(
-            egui::RichText::new("▶ Execute").size(18.0).strong(),
-        )
-        .min_size(egui::vec2(160.0, 36.0));
+        let execute_btn = egui::Button::new(egui::RichText::new("▶ Execute").size(18.0).strong())
+            .min_size(egui::vec2(160.0, 36.0));
         if ui.add(execute_btn).clicked() {
             execute();
         }

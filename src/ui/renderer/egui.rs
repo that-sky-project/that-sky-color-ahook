@@ -3,9 +3,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ui::android::input::{TouchAction, TouchEvent, drain_touches};
-use crate::ui::{PIXELS_PER_POINT, UI_HEIGHT, UI_WIDTH};
 use crate::ui::show_overlay;
-use crate::log_warn;
+use crate::ui::{PIXELS_PER_POINT, UI_HEIGHT, UI_WIDTH};
 
 pub struct EguiPainter {
     ctx: egui::Context,
@@ -57,21 +56,6 @@ impl EguiPainter {
     ) -> EguiFrame {
         let ppp = self.pixels_per_point;
 
-        // The logical UI size is fixed; the Surface window is sized to
-        // `UI * ppp`, so the two agree by construction.
-        let expected = [
-            (UI_WIDTH * ppp).round() as u32,
-            (UI_HEIGHT * ppp).round() as u32,
-        ];
-        if size_px != expected {
-            log_warn!(
-                "[rust] surface size {}x{} != expected UI {}x{}",
-                size_px[0],
-                size_px[1],
-                expected[0],
-                expected[1]
-            );
-        }
         let screen_points = [UI_WIDTH, UI_HEIGHT];
 
         let mut raw_input = egui::RawInput {
@@ -179,14 +163,39 @@ fn touch_to_egui_events(touches: Vec<TouchEvent>, ppp: f32) -> Vec<egui::Event> 
         // Touch events: stable gesture id across frames.
         let (phase, touch_id) = match touch.action {
             TouchAction::Down => {
+                // A previous gesture may never have ended (its Up/Cancel was
+                // dropped while the window relaid out, e.g. IME open/close).
+                // Close it first, or egui would treat this press as a second
+                // finger and enter multi-touch mode, ignoring taps.
+                let prev = ACTIVE_TOUCH_ID.swap(0, Ordering::Relaxed);
+                if prev != 0 {
+                    events.push(egui::Event::Touch {
+                        device_id: egui::TouchDeviceId(0),
+                        id: egui::TouchId(prev),
+                        phase: egui::TouchPhase::End,
+                        pos,
+                        force: None,
+                    });
+                    events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Default::default(),
+                    });
+                    events.push(egui::Event::PointerGone);
+                }
                 let id = NEXT_TOUCH_ID.fetch_add(1, Ordering::Relaxed);
                 ACTIVE_TOUCH_ID.store(id, Ordering::Relaxed);
                 (egui::TouchPhase::Start, id)
             }
-            TouchAction::Move => (egui::TouchPhase::Move, ACTIVE_TOUCH_ID.load(Ordering::Relaxed)),
-            TouchAction::Up | TouchAction::Cancel => {
-                (egui::TouchPhase::End, ACTIVE_TOUCH_ID.load(Ordering::Relaxed))
-            }
+            TouchAction::Move => (
+                egui::TouchPhase::Move,
+                ACTIVE_TOUCH_ID.load(Ordering::Relaxed),
+            ),
+            TouchAction::Up | TouchAction::Cancel => (
+                egui::TouchPhase::End,
+                ACTIVE_TOUCH_ID.swap(0, Ordering::Relaxed),
+            ),
         };
         if touch_id != 0 {
             events.push(egui::Event::Touch {

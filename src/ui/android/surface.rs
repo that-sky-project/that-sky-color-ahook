@@ -73,9 +73,21 @@ pub fn surface_alive() -> bool {
     SURFACE_ALIVE.load(Ordering::Relaxed)
 }
 
+/// Mark the surface alive after a successful ANativeWindow acquisition.
+///
+/// The SurfaceHolder callback can miss a recreate (e.g. after a view
+/// re-attach), leaving `SURFACE_ALIVE` stuck false even though the surface
+/// was just validated — which would make the renderer exit instantly.
+pub fn mark_alive() {
+    SURFACE_ALIVE.store(true, Ordering::Relaxed);
+}
+
 /// Last known surface size from `surfaceChanged` (px).
 pub fn surface_size() -> (u32, u32) {
-    (SURFACE_W.load(Ordering::Relaxed), SURFACE_H.load(Ordering::Relaxed))
+    (
+        SURFACE_W.load(Ordering::Relaxed),
+        SURFACE_H.load(Ordering::Relaxed),
+    )
 }
 
 /// `SurfaceCallback.surfaceCreated` — runs on the main thread.
@@ -129,7 +141,10 @@ pub fn window_size(window: &NativeWindow) -> (u32, u32) {
     if w > 0 && h > 0 {
         (w, h)
     } else {
-        (crate::ui::android::window::DEFAULT_W as u32, crate::ui::android::window::DEFAULT_H as u32)
+        (
+            crate::ui::android::window::DEFAULT_W as u32,
+            crate::ui::android::window::DEFAULT_H as u32,
+        )
     }
 }
 

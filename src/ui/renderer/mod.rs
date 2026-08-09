@@ -7,6 +7,16 @@ pub mod wgpu;
 use crate::ui::android::surface::{self, NativeWindow};
 use crate::{log_error, log_info, log_warn};
 
+/// Outcome of one render attempt.
+enum FrameResult {
+    /// Frame acquired and presented.
+    Presented,
+    /// Transient failure (timeout/outdated): keep the loop, back off.
+    Skipped,
+    /// Surface lost: hand back to the worker for re-acquisition.
+    Lost,
+}
+
 pub struct Renderer {
     /// Holds an ANativeWindow refcount so the `Surface<'static>` cannot dangle.
     _window: NativeWindow,
@@ -50,43 +60,58 @@ impl Renderer {
         let mut consecutive_skips = 0u32;
 
         loop {
-            // Phase 16: stop as soon as the SurfaceView surface is destroyed
-            // (the overlay worker re-acquires and restarts us).
+            // Stop when the SurfaceView surface is gone (the overlay worker
+            // re-acquires and restarts us). `surface_alive` is both the
+            // holder callback flag and a self-heal mark after acquisition.
             if !surface::surface_alive() {
                 log_warn!("[rust] surface destroyed, stopping renderer");
                 return;
             }
 
-            let presented = self.render_frame();
-
-            if presented {
-                consecutive_skips = 0;
-            } else {
-                consecutive_skips += 1;
-                // Back off on failures (16ms short, 1s after sustained loss).
-                let delay_ms = if consecutive_skips > 60 { 1000 } else { 16 };
-                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            let frame_start = std::time::Instant::now();
+            match self.render_frame() {
+                FrameResult::Presented => {
+                    consecutive_skips = 0;
+                    // Cap at ~120fps: Mailbox present mode does not block, so
+                    // without this the loop spins at hundreds of fps and
+                    // saturates the GPU/CPU (device-wide jank).
+                    let elapsed = frame_start.elapsed();
+                    if elapsed < std::time::Duration::from_micros(8333) {
+                        std::thread::sleep(std::time::Duration::from_micros(8333) - elapsed);
+                    }
+                }
+                FrameResult::Skipped => {
+                    consecutive_skips += 1;
+                    // Capped backoff so a transient failure (resize, IME
+                    // relayout) recovers quickly instead of feeling dead.
+                    let delay_ms = if consecutive_skips > 60 { 100 } else { 16 };
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                }
+                FrameResult::Lost => {
+                    log_error!("[rust] surface lost, restarting renderer");
+                    return;
+                }
             }
         }
     }
 
-    /// Render one frame; returns whether it was presented.
-    fn render_frame(&mut self) -> bool {
+    /// Render one frame.
+    fn render_frame(&mut self) -> FrameResult {
         // egui size tracks the surface size: reconfig on real size changes.
         self.sync_surface_size();
 
         match self.wgpu.acquire() {
             wgpu::AcquireResult::Frame(frame) => {
                 self.render_to(frame);
-                true
+                FrameResult::Presented
             }
-            wgpu::AcquireResult::Skip => false,
+            wgpu::AcquireResult::Skip => FrameResult::Skipped,
             wgpu::AcquireResult::Outdated => {
                 log_warn!("[rust] surface outdated, reconfiguring");
                 self.wgpu.reconfigure();
-                false
+                FrameResult::Skipped
             }
-            wgpu::AcquireResult::Lost => false,
+            wgpu::AcquireResult::Lost => FrameResult::Lost,
         }
     }
 

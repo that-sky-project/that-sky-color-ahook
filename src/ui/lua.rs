@@ -56,7 +56,7 @@ pub fn input_rect_px() -> (i32, i32, i32, i32) {
     // (left, top, width, height) — insets match the panel frame margin (12pt).
     let margin = (12.0 * PIXELS_PER_POINT).round() as i32;
     let w = (crate::ui::UI_WIDTH * PIXELS_PER_POINT).round() as i32 - margin * 2;
-    let top = (INPUT_TOP * PIXELS_PER_POINT - 8.0).round() as i32;
+    let top = (INPUT_TOP * PIXELS_PER_POINT).round() as i32;
     let h = ((INPUT_BOTTOM - INPUT_TOP) * PIXELS_PER_POINT + 16.0).round() as i32;
     (margin, top, w, h)
 }
